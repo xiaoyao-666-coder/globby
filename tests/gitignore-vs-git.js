@@ -85,6 +85,11 @@ test('ignored directory, with an unrelated negation present', matchesGit, {
 	files: ['app.js', 'keep.log', 'debug.log', 'build/out.js', 'build/nested/deep.js'],
 });
 
+test('directory-only rule preserves a file with the same name', matchesGit, {
+	gitignore: 'build/\n',
+	files: ['build', 'src/build/out.js', 'nested/build'],
+});
+
 test('negation cannot re-include beneath an ignored directory', matchesGit, {
 	gitignore: 'build/\n!build/keep.js\n',
 	files: ['app.js', 'build/keep.js', 'build/out.js'],

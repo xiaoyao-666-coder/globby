@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import process from 'node:process';
 import {promisify} from 'node:util';
 import fastGlob from 'fast-glob';
 import gitIgnore, {isPathValid} from 'ignore';
@@ -526,9 +527,9 @@ const getRulePrune = ({pattern, directory}, {cwd, matcher, hasNegations, canSkip
 		return undefined;
 	}
 
-	// The leading slash stops the normalizer from prefixing `**/`; the passed value already encodes the depth, and an extra `**/` would un-anchor an anchored rule.
-	const toFastGlob = value =>
-		normalizeDirectoryPatternForFastGlob(`/${value}${isDirectoryPattern ? '/' : ''}`).replace(/^\//u, '');
+	// Keep the directory-only marker so the caller can prune directory reads
+	// without handing these patterns to fast-glob's file filter.
+	const toFastGlob = value => `${value}${isDirectoryPattern ? '/' : ''}`;
 
 	// No separator: matches at any depth below the ignore file that declared it.
 	if (!body.includes('/') && canSkipAtAnyDepth(body)) {
@@ -567,7 +568,7 @@ const getRulePrune = ({pattern, directory}, {cwd, matcher, hasNegations, canSkip
 };
 
 /**
-Build the ignore patterns handed to fast-glob so it can skip ignored directories while traversing.
+Build the patterns used to skip reading ignored directories while traversing.
 
 The authoritative filter is always the predicate, so these patterns only ever need to be safe:
 skipping something the predicate would have kept loses files, while skipping less than possible
@@ -590,7 +591,7 @@ negations that could name one of them; see `negationsCouldRescue`.
 @param {Object} [options] - Options.
 @param {boolean} [options.gitignoreOnlySearch] - Whether the rule set can only grow through nested `.gitignore` files.
 @param {boolean} [options.searchesForGitignoreFiles] - Whether the search includes `.gitignore` files.
-@returns {{patterns: string[], guardNames: string[]}} Patterns safe to pass to fast-glob, and the names their safety depends on.
+@returns {{patterns: string[], guardNames: string[]}} Directory pruning patterns, and the names their safety depends on.
 */
 export const buildPrunePatternsAndGuards = (rules, matcher, cwd, {gitignoreOnlySearch = false, searchesForGitignoreFiles = false} = {}) => {
 	if (!matcher || !cwd || !rules || rules.length === 0) {
@@ -627,3 +628,51 @@ export const buildPrunePatternsAndGuards = (rules, matcher, cwd, {gitignoreOnlyS
 };
 
 export const convertPatternsForFastGlob = (rules, matcher, cwd) => buildPrunePatternsAndGuards(rules, matcher, cwd).patterns;
+
+// Fast-glob applies negative patterns to files too: `build/**` even matches a file
+// named `build`. Apply pruning only when reading directories, leaving entry
+// filtering to the authoritative ignore predicate.
+export const withDirectoryPruning = (options, patterns) => {
+	if (patterns.length === 0) {
+		return options;
+	}
+
+	const directoryPatterns = patterns.filter(pattern => pattern.endsWith('/'));
+	options = {
+		...options,
+		ignore: [...options.ignore, ...patterns.filter(pattern => !pattern.endsWith('/'))],
+	};
+	if (directoryPatterns.length === 0) {
+		return options;
+	}
+
+	const matchers = directoryPatterns.map(pattern => micromatch.matcher(`${pattern}**`, {dot: true}));
+	const cwd = options.cwd ?? process.cwd();
+	const shouldPrune = directory => {
+		const relativeDirectory = slash(path.relative(cwd, directory));
+		return isInsideCwd(relativeDirectory) && matchers.some(matcher => matcher(relativeDirectory));
+	};
+
+	const fsImplementation = options.fs;
+	const readdir = bindFsMethod(fsImplementation, 'readdir') ?? bindFsMethod(fs, 'readdir');
+	const readdirSync = bindFsMethod(fsImplementation, 'readdirSync') ?? bindFsMethod(fs, 'readdirSync');
+
+	return {
+		...options,
+		fs: {
+			...fsImplementation,
+			readdir(directory, ...arguments_) {
+				if (shouldPrune(directory)) {
+					const callback = arguments_.at(-1);
+					queueMicrotask(() => callback(null, []));
+					return;
+				}
+
+				return readdir(directory, ...arguments_);
+			},
+			readdirSync(directory, ...arguments_) {
+				return shouldPrune(directory) ? [] : readdirSync(directory, ...arguments_);
+			},
+		},
+	};
+};

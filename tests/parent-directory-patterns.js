@@ -305,15 +305,15 @@ test('convertPatternsForFastGlob builds prune patterns from ignore rules', t => 
 	const convert = (rules, cwd = repository) => convertPatternsForFastGlob(rules, ignored, cwd);
 
 	// No separator: the rule matches at any depth below its own ignore file.
-	t.deepEqual(convert([{pattern: 'node_modules/', directory: repository}]), ['**/node_modules/**']);
+	t.deepEqual(convert([{pattern: 'node_modules/', directory: repository}]), ['**/node_modules/']);
 
 	// A separator anchors the rule to the directory of its ignore file.
-	t.deepEqual(convert([{pattern: '/build/', directory: repository}]), ['build/**']);
+	t.deepEqual(convert([{pattern: '/build/', directory: repository}]), ['build/']);
 
 	// A rule from a parent ignore file still prunes when the glob runs from a subdirectory.
 	t.deepEqual(
 		convert([{pattern: 'node_modules/', directory: repository}], path.resolve('/repo/packages/app')),
-		['**/node_modules/**'],
+		['**/node_modules/'],
 	);
 
 	// An anchored rule pointing outside the cwd has nothing to prune.
@@ -329,7 +329,7 @@ test('convertPatternsForFastGlob builds prune patterns from ignore rules', t => 
 			{pattern: 'mount/', directory: repository},
 			{pattern: '!sub/mount/', directory: repository},
 		]),
-		['mount/**'],
+		['mount/'],
 	);
 
 	// A negation that cannot name the directory leaves the rule prunable at any depth.
@@ -338,28 +338,28 @@ test('convertPatternsForFastGlob builds prune patterns from ignore rules', t => 
 			{pattern: 'mount/', directory: repository},
 			{pattern: '!keep.log', directory: repository},
 		]),
-		['**/mount/**'],
+		['**/mount/'],
 	);
 
 	// Micromatch-special characters in a literal name are escaped so they cannot be misread as syntax.
-	t.deepEqual(convert([{pattern: '/a+(b)/', directory: repository}]), [String.raw`a\+\(b\)/**`]);
+	t.deepEqual(convert([{pattern: '/a+(b)/', directory: repository}]), [String.raw`a\+\(b\)/`]);
 
 	// A glob rule containing syntax gitignore treats literally cannot be translated, so nothing is pruned.
 	t.deepEqual(convert([{pattern: '/gen*(x)/', directory: repository}]), []);
 
 	// `?` and `[...]` are gitignore wildcards fast-glob also understands, so they translate like `*`.
-	t.deepEqual(convert([{pattern: 'bui?d/', directory: repository}]), ['**/bui?d/**']);
-	t.deepEqual(convert([{pattern: '[bc]ache/', directory: repository}]), ['**/[bc]ache/**']);
+	t.deepEqual(convert([{pattern: 'bui?d/', directory: repository}]), ['**/bui?d/']);
+	t.deepEqual(convert([{pattern: '[bc]ache/', directory: repository}]), ['**/[bc]ache/']);
 
 	// An explicit `**/` prefix is equivalent to a bare directory name and prunes the same way,
 	// including at any depth when an unrelated negation is present (a plain glob could not).
-	t.deepEqual(convert([{pattern: '**/generated/', directory: repository}]), ['**/generated/**']);
+	t.deepEqual(convert([{pattern: '**/generated/', directory: repository}]), ['**/generated/']);
 	t.deepEqual(
 		convert([
 			{pattern: '**/build/', directory: repository},
 			{pattern: '!keep.log', directory: repository},
 		]),
-		['**/build/**'],
+		['**/build/'],
 	);
 
 	// Without a matcher nothing can be verified, so nothing is pruned.

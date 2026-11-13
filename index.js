@@ -21,6 +21,7 @@ import {
 	normalizeNegativePattern,
 	adjustIgnorePatternsForParentDirectories,
 	convertPatternsForFastGlob,
+	withDirectoryPruning,
 	convertIgnorePatternsForIgnoreFileSearch,
 	findGitRoot,
 	findGitRootSync,
@@ -236,7 +237,7 @@ const combinePredicate = (matcher, globalMatcher) => {
 const buildIgnoreFilterResult = ({options, cwd, ignoreResult: {rules, matcher}, globalMatcher, createFilter}) => {
 	const finalPredicate = combinePredicate(matcher, globalMatcher);
 
-	// Patterns fast-glob can use to skip ignored directories while traversing. The predicate below stays authoritative, so this only ever needs to be safe, never exhaustive. They are returned separately from `options.ignore` so they skip directory expansion and the parent-directory adjustment, which would rebase them outside the scope their ignore files govern.
+	// Patterns used to skip reading ignored directories. The predicate below stays authoritative, so this only ever needs to be safe, never exhaustive. They are returned separately from `options.ignore` so they skip directory expansion and the parent-directory adjustment, which would rebase them outside the scope their ignore files govern.
 	const pruneIgnorePatterns = convertPatternsForFastGlob(rules, matcher, cwd);
 
 	return {
@@ -257,7 +258,7 @@ Apply ignore files to options and return the filter predicate.
 
 The predicate handles every rule, including negations, and is the authoritative filter applied
 to fast-glob's results. Rules that provably cannot be affected by negations are additionally
-translated into fast-glob `ignore` patterns, so whole ignored directories are skipped during
+translated into directory pruning patterns, so whole ignored directories are skipped during
 traversal; see `convertPatternsForFastGlob`.
 
 @returns {Promise<{options: Object, pruneIgnorePatterns: string[], filter: Function}>}
@@ -562,17 +563,14 @@ const applyParentDirectoryIgnoreAdjustments = tasks => tasks.map(task => ({
 	},
 }));
 
-// Prune patterns are appended after directory expansion and the parent-directory adjustment on
+// Pruning is applied after directory expansion and the parent-directory adjustment on
 // purpose: they are already glob-shaped, and rebasing them onto a `../` prefix would let them
 // ignore paths outside the scope of the ignore files they came from.
-const appendPruneIgnorePatterns = (tasks, pruneIgnorePatterns) => pruneIgnorePatterns.length === 0
+const applyDirectoryPruning = (tasks, pruneIgnorePatterns) => pruneIgnorePatterns.length === 0
 	? tasks
 	: tasks.map(task => ({
 		patterns: task.patterns,
-		options: {
-			...task.options,
-			ignore: [...task.options.ignore, ...pruneIgnorePatterns],
-		},
+		options: withDirectoryPruning(task.options, pruneIgnorePatterns),
 	}));
 
 const normalizeExpandDirectoriesOption = (options, cwd) => ({
@@ -586,7 +584,7 @@ const generateTasks = async (patterns, options, pruneIgnorePatterns = []) => {
 	const {cwd, expandDirectories, fs: fsImplementation} = options;
 
 	if (!expandDirectories) {
-		return appendPruneIgnorePatterns(applyParentDirectoryIgnoreAdjustments(globTasks), pruneIgnorePatterns);
+		return applyDirectoryPruning(applyParentDirectoryIgnoreAdjustments(globTasks), pruneIgnorePatterns);
 	}
 
 	const directoryToGlobOptions = {
@@ -611,7 +609,7 @@ const generateTasks = async (patterns, options, pruneIgnorePatterns = []) => {
 		return {patterns, options};
 	}));
 
-	return appendPruneIgnorePatterns(tasks, pruneIgnorePatterns);
+	return applyDirectoryPruning(tasks, pruneIgnorePatterns);
 };
 
 const generateTasksSync = (patterns, options, pruneIgnorePatterns = []) => {
@@ -619,7 +617,7 @@ const generateTasksSync = (patterns, options, pruneIgnorePatterns = []) => {
 	const {cwd, expandDirectories, fs: fsImplementation} = options;
 
 	if (!expandDirectories) {
-		return appendPruneIgnorePatterns(applyParentDirectoryIgnoreAdjustments(globTasks), pruneIgnorePatterns);
+		return applyDirectoryPruning(applyParentDirectoryIgnoreAdjustments(globTasks), pruneIgnorePatterns);
 	}
 
 	const directoryToGlobSyncOptions = {
@@ -638,7 +636,7 @@ const generateTasksSync = (patterns, options, pruneIgnorePatterns = []) => {
 		return {patterns, options};
 	});
 
-	return appendPruneIgnorePatterns(tasks, pruneIgnorePatterns);
+	return applyDirectoryPruning(tasks, pruneIgnorePatterns);
 };
 
 export const globby = normalizeArguments(async (patterns, options) => {
